@@ -113,6 +113,8 @@ def options2kw(options):
   else:
     kw['host']=options.host
     kw['port']=options.port
+    kw['ssl']=options.ssl # support tls
+
   if options.password: kw['password']=options.password
   return kw
 
@@ -131,6 +133,8 @@ def main():
   # parser.add_option("-e", action="store_true", dest="use_expire_at", help="use expire_at when in restore mode")
   parser.add_option("-t", action="store_true", dest="use_ttl", help="use ttl when in restore mode")
   parser.add_option('-b', '--bulk', help='restore bulk size', default=1000, type="int")
+  parser.add_option('-S', '--ssl', help='use tls connection', action="store_true") # support tls
+
   options, args = parser.parse_args()
   if len(args)!=1:
     parser.print_help()
