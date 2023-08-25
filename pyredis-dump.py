@@ -13,37 +13,52 @@ class RedisDump(Redis):
     self._have_pttl = version >= [2, 6]
     self._types = set(['string', 'list', 'set', 'zset', 'hash'])
 
-  def get_one(self, key):
-    type = self.type(key)
+  def pattern_iter(self, pattern="*", bulk_size=1000):
+    print(f"bulk_size: {bulk_size}")
+    keys = self.keys(pattern)
+    last_key = keys[-1]
     p = self.pipeline()
-    p.watch(key)
+    key_list = []
     p.multi()
-    p.type(key)
-    if self._have_pttl:
-      p.pttl(key)
-    else:
-      p.ttl(key)
-    if type==b'string': p.get(key)
-    elif type==b'list': p.lrange(key, 0, -1)
-    elif type==b'set':  p.smembers(key)
-    elif type==b'zset': p.zrange(key, 0, -1, False, True)
-    elif type==b'hash': p.hgetall(key)
-    else: raise TypeError('Unknown type=%r' % type)
-    type2, ttl, value = p.execute()
-    if self._have_pttl and ttl>0:
-      ttl = ttl / 1000.0
-    if type!=type2: raise TypeError("Type changed")
-    if ttl>0:
-      expire_at = time.time() + ttl
-    else: expire_at=-1
-    return type, key, ttl, expire_at, value
+    for key in keys:
+      key_list.append(key)
+      type = self.type(key)
+      # type2
+      p.type(key)
+      # ttl
+      if self._have_pttl:
+        p.pttl(key)
+      else:
+        p.ttl(key)
+      # value
+      if type==b'string': p.get(key)
+      elif type==b'list': p.lrange(key, 0, -1)
+      elif type==b'set':  p.smembers(key)
+      elif type==b'zset': p.zrange(key, 0, -1, False, True)
+      elif type==b'hash': p.hgetall(key)
+      else: raise TypeError('Unknown type=%r' % type)
 
-  def pattern_iter(self, pattern="*"):
-    for key in self.keys(pattern):
-      yield self.get_one(key)
-  
-  def dump(self, outfile, pattern="*"):
-    for type, key, ttl, expire_at, value in self.pattern_iter(pattern):
+      if len(key_list) == bulk_size or key == last_key:
+        #print("-- batch")
+        results = p.execute()
+        for n in range(0, len(results), 3):
+          key2 = key_list[n//3]
+          type2 = results[n]
+          ttl = results[n+1]
+          value = results[n+2]
+          if self._have_pttl and ttl > 0:
+            ttl = ttl / 1000.0
+          if type != type2: raise TypeError("Type changed")
+          if ttl > 0:
+            expire_at = time.time() + ttl
+          else: expire_at = -1
+          yield type, key2, ttl, expire_at, value
+
+        key_list = []
+        p.multi()
+
+  def dump(self, outfile, pattern="*", bulk_size=1000):
+    for type, key, ttl, expire_at, value in self.pattern_iter(pattern, bulk_size):
       line=repr((type, key, ttl, expire_at, value,))
       outfile.write(line+"\n")
 
@@ -90,10 +105,10 @@ class RedisDump(Redis):
         p = self.pipeline(transaction=False)
     if dirty: p.execute()
 
-def dump(filename, pattern="*", **kw):
+def dump(filename, pattern="*", bulk_size=1000, **kw):
   r=RedisDump(**kw)
   with open(filename, "w+") as outfile:
-    r.dump(outfile, pattern)
+    r.dump(outfile, pattern, bulk_size)
 
 def restore(filename, use_ttl=True, bulk_size=1000, **kw):
   r=RedisDump(**kw)
@@ -132,7 +147,7 @@ def main():
   parser.add_option('-i', '--infile', help='read from INFILE')
   # parser.add_option("-e", action="store_true", dest="use_expire_at", help="use expire_at when in restore mode")
   parser.add_option("-t", action="store_true", dest="use_ttl", help="use ttl when in restore mode")
-  parser.add_option('-b', '--bulk', help='restore bulk size', default=1000, type="int")
+  parser.add_option('-b', '--bulk', help='dump/restore bulk size', default=1000, type="int")
   parser.add_option('-S', '--ssl', help='use tls connection', action="store_true") # support tls
 
   options, args = parser.parse_args()
@@ -146,7 +161,7 @@ def main():
     if not options.outfile: parser.error("missing outfile, use '-o'")
     print("dumping to %r" % options.outfile)
     print("connecting to %r" % kw)
-    dump(options.outfile, options.pattern, **kw)
+    dump(options.outfile, options.pattern, bulk_size=options.bulk, **kw)
   elif mode=='restore':
     if not options.infile: parser.error("missing infile, use '-i'")
     print("restore from %r" % options.infile)
