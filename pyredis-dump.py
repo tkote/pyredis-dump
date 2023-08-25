@@ -16,46 +16,52 @@ class RedisDump(Redis):
   def pattern_iter(self, pattern="*", bulk_size=1000):
     print(f"bulk_size: {bulk_size}")
     keys = self.keys(pattern)
-    last_key = keys[-1]
-    p = self.pipeline()
-    key_list = []
-    p.multi()
-    for key in keys:
-      key_list.append(key)
-      type = self.type(key)
-      # type2
-      p.type(key)
-      # ttl
-      if self._have_pttl:
-        p.pttl(key)
-      else:
-        p.ttl(key)
-      # value
-      if type==b'string': p.get(key)
-      elif type==b'list': p.lrange(key, 0, -1)
-      elif type==b'set':  p.smembers(key)
-      elif type==b'zset': p.zrange(key, 0, -1, False, True)
-      elif type==b'hash': p.hgetall(key)
-      else: raise TypeError('Unknown type=%r' % type)
+    num_keys = len(keys)
 
-      if len(key_list) == bulk_size or key == last_key:
-        #print("-- batch")
+    for i in range(0, num_keys, bulk_size):
+      max = i + bulk_size if i + bulk_size < num_keys else num_keys
+      key_list = keys[i:max]
+
+      with self.pipeline(transaction=False) as p:
+        for key in key_list:
+          p.type(key)
+        type_list = p.execute()
+
+      with self.pipeline() as p:
+        p.watch(*key_list)
+        p.multi()
+        for j in range(len(key_list)):
+          key = key_list[j]
+          type = type_list[j]
+          # get type
+          p.type(key)
+          # get ttl
+          if self._have_pttl:
+            p.pttl(key)
+          else:
+            p.ttl(key)
+          # get value
+          if type==b'string': p.get(key)
+          elif type==b'list': p.lrange(key, 0, -1)
+          elif type==b'set':  p.smembers(key)
+          elif type==b'zset': p.zrange(key, 0, -1, False, True)
+          elif type==b'hash': p.hgetall(key)
+          else: raise TypeError('Unknown type=%r' % type)
+
         results = p.execute()
         for n in range(0, len(results), 3):
           key2 = key_list[n//3]
+          type1 = type_list[n//3]
           type2 = results[n]
           ttl = results[n+1]
           value = results[n+2]
+          if type1 != type2: raise TypeError("Type changed")
           if self._have_pttl and ttl > 0:
             ttl = ttl / 1000.0
-          if type != type2: raise TypeError("Type changed")
           if ttl > 0:
             expire_at = time.time() + ttl
           else: expire_at = -1
-          yield type, key2, ttl, expire_at, value
-
-        key_list = []
-        p.multi()
+          yield type2, key2, ttl, expire_at, value
 
   def dump(self, outfile, pattern="*", bulk_size=1000):
     for type, key, ttl, expire_at, value in self.pattern_iter(pattern, bulk_size):
