@@ -13,8 +13,8 @@ class RedisDump(Redis):
     self._have_pttl = version >= [2, 6]
     self._types = set(['string', 'list', 'set', 'zset', 'hash'])
 
-  def pattern_iter(self, pattern="*", bulk_size=1000):
-    print(f"bulk_size: {bulk_size}")
+  def pattern_iter(self, pattern="*", bulk_size=1000, watch_keys=False):
+    print("bulk_size: {0}, watch_keys: {1}".format(bulk_size, watch_keys))
     keys = self.keys(pattern)
     num_keys = len(keys)
 
@@ -28,8 +28,10 @@ class RedisDump(Redis):
         type_list = p.execute()
 
       with self.pipeline() as p:
-        p.watch(*key_list)
-        p.multi()
+        if watch_keys:
+          p.watch(*key_list)
+          p.multi()
+
         for j in range(len(key_list)):
           key = key_list[j]
           type = type_list[j]
@@ -63,10 +65,13 @@ class RedisDump(Redis):
           else: expire_at = -1
           yield type2, key2, ttl, expire_at, value
 
-  def dump(self, outfile, pattern="*", bulk_size=1000):
-    for type, key, ttl, expire_at, value in self.pattern_iter(pattern, bulk_size):
+  def dump(self, outfile, pattern="*", bulk_size=1000, watch_keys=False):
+    counter = 0
+    for type, key, ttl, expire_at, value in self.pattern_iter(pattern, bulk_size, watch_keys):
       line=repr((type, key, ttl, expire_at, value,))
       outfile.write(line+"\n")
+      counter += 1
+    print("dumped {:,} records".format(counter))
 
   def set_one(self, p, use_ttl, key_type, key, ttl, expire_at, value):
     p.delete(key)
@@ -111,10 +116,10 @@ class RedisDump(Redis):
         p = self.pipeline(transaction=False)
     if dirty: p.execute()
 
-def dump(filename, pattern="*", bulk_size=1000, **kw):
+def dump(filename, pattern="*", bulk_size=1000, watch_keys=False, **kw):
   r=RedisDump(**kw)
   with open(filename, "w+") as outfile:
-    r.dump(outfile, pattern, bulk_size)
+    r.dump(outfile, pattern, bulk_size, watch_keys)
 
 def restore(filename, use_ttl=True, bulk_size=1000, **kw):
   r=RedisDump(**kw)
@@ -154,7 +159,8 @@ def main():
   # parser.add_option("-e", action="store_true", dest="use_expire_at", help="use expire_at when in restore mode")
   parser.add_option("-t", action="store_true", dest="use_ttl", help="use ttl when in restore mode")
   parser.add_option('-b', '--bulk', help='dump/restore bulk size', default=1000, type="int")
-  parser.add_option('-S', '--ssl', help='use tls connection', action="store_true") # support tls
+  parser.add_option('-S', '--ssl', help='use tls connection', action="store_true")
+  parser.add_option('-k', '--watch', help='watch key value change while dumping', action="store_true")
 
   options, args = parser.parse_args()
   if len(args)!=1:
@@ -167,7 +173,7 @@ def main():
     if not options.outfile: parser.error("missing outfile, use '-o'")
     print("dumping to %r" % options.outfile)
     print("connecting to %r" % kw)
-    dump(options.outfile, options.pattern, bulk_size=options.bulk, **kw)
+    dump(options.outfile, options.pattern, bulk_size=options.bulk, watch_keys=bool(options.watch), **kw)
   elif mode=='restore':
     if not options.infile: parser.error("missing infile, use '-i'")
     print("restore from %r" % options.infile)
@@ -180,5 +186,7 @@ def main():
     parser.error("unknown mode %r" % mode)
 
 if __name__=='__main__':
+  start = time.perf_counter()
   main()
+  print("elapsed time: {:,.3f} seconds".format(time.perf_counter() - start))
 
