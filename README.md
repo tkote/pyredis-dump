@@ -1,3 +1,10 @@
+# forked from muayyad-alsadi/pyredis-dump
+
+- -b/--bulk option is now effective for both dump/restore
+- -k/--watch option to enable watch(**keys) within dump pipeline (default: disabled)
+- -S/--ssl option to support TLS
+
+
 # pyredis-dump - A Redis Dump/Restore Tool
 
 Inspired by [redis-dump-load](https://github.com/p/redis-dump-load)
