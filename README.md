@@ -1,9 +1,12 @@
-# forked from muayyad-alsadi/pyredis-dump
+## forked from muayyad-alsadi/pyredis-dump
 
-- -b/--bulk option is now effective for both dump/restore
+Additional features
+
+- -b/--bulk option is now effective for both dump/restore (originally for restore only)
 - -k/--watch option to enable watch(**keys) within dump pipeline (default: disabled)
 - -S/--ssl option to support TLS
 
+---
 
 # pyredis-dump - A Redis Dump/Restore Tool
 
