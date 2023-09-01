@@ -14,9 +14,9 @@ class RedisDump(Redis):
     self._types = set(['string', 'list', 'set', 'zset', 'hash'])
 
   def pattern_iter(self, pattern="*", bulk_size=1000, watch_keys=False):
-    print("bulk_size: {0}, watch_keys: {1}".format(bulk_size, watch_keys))
     keys = self.keys(pattern)
     num_keys = len(keys)
+    print("{:,} keys, bulk_size: {}, watch_keys: {}".format(num_keys, bulk_size, watch_keys))
 
     for i in range(0, num_keys, bulk_size):
       max = i + bulk_size if i + bulk_size < num_keys else num_keys
@@ -32,9 +32,22 @@ class RedisDump(Redis):
           p.watch(*key_list)
           p.multi()
 
+        # keep valid keys and types which are to be pushed into pipeline
+        valid_keys = [] 
+        valid_types = []
+
         for j in range(len(key_list)):
+          
           key = key_list[j]
           type = type_list[j]
+
+          # handle the case when type is None (key was deleted after keys())
+          if type == b'none': 
+            print("type doesn't exist for key: {}, skipped".format(key))
+            continue
+          valid_keys.append(key)
+          valid_types.append(type)
+
           # get type
           p.type(key)
           # get ttl
@@ -52,11 +65,17 @@ class RedisDump(Redis):
 
         results = p.execute()
         for n in range(0, len(results), 3):
-          key2 = key_list[n//3]
-          type1 = type_list[n//3]
+          key2 = valid_keys[n//3]
+          type1 = valid_types[n//3]
           type2 = results[n]
           ttl = results[n+1]
           value = results[n+2]
+
+          # handle the case when key was deleted before execute()
+          if value is None:
+            print("key doesn't exist: {}, skipped".format(key2))
+            continue
+
           if type1 != type2: raise TypeError("Type changed")
           if self._have_pttl and ttl > 0:
             ttl = ttl / 1000.0
@@ -100,6 +119,7 @@ class RedisDump(Redis):
       else: p.pexpireat(key, int(expire_at * 1000))
 
   def restore(self, infile, use_ttl=False, bulk_size=1000):
+    counter = 0
     p = self.pipeline(transaction=False)
     dirty=False
     for i, line in enumerate(infile):
@@ -114,7 +134,10 @@ class RedisDump(Redis):
         dirty=False
         p.execute()
         p = self.pipeline(transaction=False)
+      counter += 1
     if dirty: p.execute()
+    print("restored {:,} records".format(counter))
+
 
 def dump(filename, pattern="*", bulk_size=1000, watch_keys=False, **kw):
   r=RedisDump(**kw)

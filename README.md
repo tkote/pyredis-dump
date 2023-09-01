@@ -3,8 +3,9 @@
 Additional features
 
 - -b/--bulk option is now effective for both dump/restore (originally for restore only)
-- -k/--watch option to enable watch(**keys) within dump pipeline (default: disabled, originally each key was watched for update)
+- -k/--watch option to enable watch(*keys) within dump pipeline (default: disabled, originally each key was watched for update)
 - -S/--ssl option to support TLS
+- When a key is deleted during processing, skip dumping that key and continue processing.
 
 ---
 
